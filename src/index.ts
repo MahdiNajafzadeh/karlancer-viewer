@@ -61,8 +61,9 @@ app.post("/api/settings/formula", async (c) => {
 
 app.post("/api/refresh", async (c) => {
   const body = await c.req.json().catch(() => ({}));
-  const maxPages = Number((body as any)?.maxPages ?? 0);
-  const { projects: raw } = await fetchAllPages("newest", maxPages, 150, 4);
+  const fromPage = Number((body as any)?.fromPage ?? 0);
+  const toPage = Number((body as any)?.toPage ?? 0);
+  const { projects: raw } = await fetchAllPages("newest", fromPage, toPage, 150, 4);
   const normalized = raw.map(normalize);
   await upsertProjects(normalized);
   const count = await countProjects();

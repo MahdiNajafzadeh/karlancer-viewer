@@ -6,6 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Toaster, toast } from "sonner";
 
 type Project = {
@@ -31,6 +32,30 @@ type Project = {
 type SortKey = "score" | "title" | "minBudget" | "maxBudget" | "budget" | "duration" | "rating" | "bids" | "country";
 type SortDir = "asc" | "desc";
 
+const COLUMNS: { key: SortKey | "skills" | "starred" | "urgent" | "successRate"; label: string; type: "number" | "string" | "boolean" }[] = [
+  { key: "score", label: "Score", type: "number" },
+  { key: "title", label: "Title", type: "string" },
+  { key: "minBudget", label: "Budget min", type: "number" },
+  { key: "maxBudget", label: "Budget max", type: "number" },
+  { key: "budget", label: "Budget avg", type: "number" },
+  { key: "duration", label: "Dur (d)", type: "number" },
+  { key: "rating", label: "Rating", type: "number" },
+  { key: "bids", label: "Bids", type: "number" },
+  { key: "country", label: "City", type: "string" },
+  { key: "skills", label: "Skills", type: "string" },
+  { key: "starred", label: "Starred", type: "boolean" },
+  { key: "urgent", label: "Urgent", type: "boolean" },
+  { key: "successRate", label: "Success rate", type: "number" },
+];
+
+type Filter = { id: number; col: string; op: string; val: string };
+
+const OPS: Record<string, string[]> = {
+  number: ["min", "max", "equal", "not-equal"],
+  string: ["equal", "not-equal", "contains"],
+  boolean: ["equal", "not-equal"],
+};
+
 export default function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [formula, setFormula] = useState("");
@@ -38,12 +63,17 @@ export default function App() {
   const [count, setCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [maxPages, setMaxPages] = useState("1");
+  const [fromPage, setFromPage] = useState("1");
+  const [toPage, setToPage] = useState("1");
   const [sortKey, setSortKey] = useState<SortKey>("score");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [view, setView] = useState<"all" | "starred">("all");
   const [selected, setSelected] = useState<Project | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [filters, setFilters] = useState<Filter[]>([]);
+  const [nextFilterId, setNextFilterId] = useState(1);
+
+  const money = (n: number) => Number(n || 0).toLocaleString("en-US");
 
   async function loadSettings() {
     const r = await fetch("/api/settings");
@@ -86,7 +116,7 @@ export default function App() {
       const r = await fetch("/api/refresh", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ maxPages: Number(maxPages) || 0 }),
+        body: JSON.stringify({ fromPage: Number(fromPage) || 0, toPage: Number(toPage) || 0 }),
       });
       const d = await r.json();
       toast.success(`Fetched ${d.fetched} projects (total ${d.total})`);
@@ -123,8 +153,76 @@ export default function App() {
     }
   }
 
+  async function copyMarkdown(p: Project) {
+    const md = [
+      `# ${p.title}`,
+      ``,
+      `- **Score:** ${Math.round(p.score * 100) / 100}`,
+      `- **Budget min:** ${money(p.minBudget)}`,
+      `- **Budget max:** ${money(p.maxBudget)}`,
+      `- **Budget avg:** ${money(p.budget)}`,
+      `- **Duration:** ${p.duration} days`,
+      `- **Rating:** ${p.rating || "N/A"} (${p.ratingCount} ratings)`,
+      `- **Bids:** ${p.bids}`,
+      `- **City:** ${p.country || "—"}`,
+      `- **Success rate:** ${p.successRate}%`,
+      `- **Urgent:** ${p.urgent ? "Yes" : "No"}`,
+      `- **Skills:** ${p.skills.join(", ") || "—"}`,
+      p.url ? `- **URL:** https://www.karlancer.com/projects/${p.url}` : "",
+      ``,
+      `## Description`,
+      ``,
+      p.description || "No description.",
+    ].filter((l) => l !== undefined).join("\n");
+    try {
+      await navigator.clipboard.writeText(md);
+      toast.success("Copied as Markdown");
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = md;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      toast.success("Copied as Markdown");
+    }
+  }
+
+  function applyFilters(list: Project[]) {
+    return list.filter((p) => {
+      return filters.every((f) => {
+        const col = COLUMNS.find((c) => c.key === f.col);
+        if (!col) return true;
+        const raw = (p as any)[f.col];
+        const type = col.type;
+        if (type === "number") {
+          const v = Number(f.val);
+          if (isNaN(v)) return true;
+          if (f.op === "min") return Number(raw) >= v;
+          if (f.op === "max") return Number(raw) <= v;
+          if (f.op === "equal") return Number(raw) === v;
+          if (f.op === "not-equal") return Number(raw) !== v;
+        }
+        if (type === "string") {
+          const s = String(raw ?? "").toLowerCase();
+          const v = f.val.toLowerCase();
+          if (f.op === "equal") return s === v;
+          if (f.op === "not-equal") return s !== v;
+          if (f.op === "contains") return s.includes(v);
+        }
+        if (type === "boolean") {
+          const b = f.val === "true" || f.val === "1";
+          if (f.op === "equal") return Boolean(raw) === b;
+          if (f.op === "not-equal") return Boolean(raw) !== b;
+        }
+        return true;
+      });
+    });
+  }
+
   const sorted = useMemo(() => {
-    const arr = [...projects];
+    let arr = [...projects];
+    arr = applyFilters(arr);
     arr.sort((a, b) => {
       const va = (a as any)[sortKey];
       const vb = (b as any)[sortKey];
@@ -134,7 +232,7 @@ export default function App() {
       return sortDir === "asc" ? cmp : -cmp;
     });
     return arr;
-  }, [projects, sortKey, sortDir]);
+  }, [projects, sortKey, sortDir, filters]);
 
   function toggleSort(key: SortKey) {
     if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -144,8 +242,20 @@ export default function App() {
     }
   }
 
-  const money = (n: number) => Number(n || 0).toLocaleString("en-US");
   const arrow = (key: SortKey) => (sortKey === key ? (sortDir === "asc" ? " ▲" : " ▼") : "");
+
+  function addFilter() {
+    setFilters((prev) => [...prev, { id: nextFilterId, col: "score", op: "min", val: "" }]);
+    setNextFilterId((n) => n + 1);
+  }
+
+  function updateFilter(id: number, patch: Partial<Filter>) {
+    setFilters((prev) => prev.map((f) => (f.id === id ? { ...f, ...patch } : f)));
+  }
+
+  function removeFilter(id: number) {
+    setFilters((prev) => prev.filter((f) => f.id !== id));
+  }
 
   return (
     <div className="min-h-screen bg-background text-foreground p-6">
@@ -174,18 +284,20 @@ export default function App() {
         <Card>
           <CardHeader>
             <CardTitle>Refresh from karlancer.com</CardTitle>
-            <CardDescription>Manual fetch to reduce unnecessary HTTP requests.</CardDescription>
+            <CardDescription>Manual fetch to reduce unnecessary HTTP requests. Enter page range (0 = all).</CardDescription>
           </CardHeader>
-          <CardContent className="flex gap-2 items-center">
-            <Input type="number" value={maxPages} onChange={(e) => setMaxPages(e.target.value)} className="w-24" />
-            <span className="text-sm text-muted-foreground">pages (0 = all)</span>
+          <CardContent className="flex gap-2 items-center flex-wrap">
+            <span className="text-sm text-muted-foreground">From page</span>
+            <Input type="number" value={fromPage} onChange={(e) => setFromPage(e.target.value)} className="w-20" />
+            <span className="text-sm text-muted-foreground">To page</span>
+            <Input type="number" value={toPage} onChange={(e) => setToPage(e.target.value)} className="w-20" />
             <Button onClick={refresh} disabled={refreshing}>{refreshing ? "Fetching..." : "Refresh"}</Button>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <CardTitle>Projects (click row for details, header to sort)</CardTitle>
               <div className="flex gap-2">
                 <Button variant={view === "all" ? "default" : "outline"} size="sm" onClick={() => setView("all")}>All</Button>
@@ -193,60 +305,102 @@ export default function App() {
               </div>
             </div>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-3">
+            {/* Filters */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-semibold">Column filters</span>
+                <Button size="sm" variant="outline" onClick={addFilter}>+ Add filter</Button>
+              </div>
+              {filters.map((f) => {
+                const col = COLUMNS.find((c) => c.key === f.col);
+                const type = col?.type || "string";
+                return (
+                  <div key={f.id} className="flex gap-2 items-center flex-wrap">
+                    <Select value={f.col} onValueChange={(v) => updateFilter(f.id, { col: v ?? f.col, op: OPS[COLUMNS.find((c) => c.key === (v ?? f.col))?.type || "string"][0] })}>
+                      <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {COLUMNS.map((c) => (<SelectItem key={c.key} value={c.key}>{c.label}</SelectItem>))}
+                      </SelectContent>
+                    </Select>
+                    <Select value={f.op} onValueChange={(v) => updateFilter(f.id, { op: v ?? f.op })}>
+                      <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {OPS[type].map((o) => (<SelectItem key={o} value={o}>{o}</SelectItem>))}
+                      </SelectContent>
+                    </Select>
+                    {type === "boolean" ? (
+                      <Select value={f.val} onValueChange={(v) => updateFilter(f.id, { val: v ?? f.val })}>
+                        <SelectTrigger className="w-24"><SelectValue placeholder="value" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="true">true</SelectItem>
+                          <SelectItem value="false">false</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <Input value={f.val} onChange={(e) => updateFilter(f.id, { val: e.target.value })} placeholder="value" className="w-40" />
+                    )}
+                    <Button size="sm" variant="ghost" onClick={() => removeFilter(f.id)}>✕</Button>
+                  </div>
+                );
+              })}
+            </div>
+
             {loading ? (
               <p className="text-muted-foreground">Loading...</p>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-10"></TableHead>
-                    <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("score")}>Score{arrow("score")}</TableHead>
-                    <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("title")}>Title{arrow("title")}</TableHead>
-                    <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("minBudget")}>Budget min{arrow("minBudget")}</TableHead>
-                    <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("maxBudget")}>Budget max{arrow("maxBudget")}</TableHead>
-                    <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("budget")}>Budget avg{arrow("budget")}</TableHead>
-                    <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("duration")}>Dur (d){arrow("duration")}</TableHead>
-                    <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("rating")}>Rating{arrow("rating")}</TableHead>
-                    <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("bids")}>Bids{arrow("bids")}</TableHead>
-                    <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("country")}>City{arrow("country")}</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {sorted.map((p, i) => (
-                    <TableRow key={p.id} className="cursor-pointer" onClick={() => openDetail(p)}>
-                      <TableCell onClick={(e) => toggleStar(p, e)}>
-                        <span className={p.starred ? "text-yellow-500" : "text-muted-foreground"}>{p.starred ? "★" : "☆"}</span>
-                      </TableCell>
-                      <TableCell className="font-bold">{i + 1}. {Math.round(p.score * 100) / 100}</TableCell>
-                      <TableCell className="max-w-xs truncate">{p.title}</TableCell>
-                      <TableCell>{money(p.minBudget)}</TableCell>
-                      <TableCell>{money(p.maxBudget)}</TableCell>
-                      <TableCell>{money(p.budget)}</TableCell>
-                      <TableCell>{p.duration}</TableCell>
-                      <TableCell>{p.rating || "N/A"}</TableCell>
-                      <TableCell>{p.bids}</TableCell>
-                      <TableCell>{p.country}</TableCell>
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-10"></TableHead>
+                      <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("score")}>Score{arrow("score")}</TableHead>
+                      <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("title")}>Title{arrow("title")}</TableHead>
+                      <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("minBudget")}>Budget min{arrow("minBudget")}</TableHead>
+                      <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("maxBudget")}>Budget max{arrow("maxBudget")}</TableHead>
+                      <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("budget")}>Budget avg{arrow("budget")}</TableHead>
+                      <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("duration")}>Dur (d){arrow("duration")}</TableHead>
+                      <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("rating")}>Rating{arrow("rating")}</TableHead>
+                      <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("bids")}>Bids{arrow("bids")}</TableHead>
+                      <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("country")}>City{arrow("country")}</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {sorted.map((p, i) => (
+                      <TableRow key={p.id} className="cursor-pointer" onClick={() => openDetail(p)}>
+                        <TableCell onClick={(e) => toggleStar(p, e)}>
+                          <span className={p.starred ? "text-yellow-500" : "text-muted-foreground"}>{p.starred ? "★" : "☆"}</span>
+                        </TableCell>
+                        <TableCell className="font-bold">{i + 1}. {Math.round(p.score * 100) / 100}</TableCell>
+                        <TableCell className="max-w-xs truncate">{p.title}</TableCell>
+                        <TableCell>{money(p.minBudget)}</TableCell>
+                        <TableCell>{money(p.maxBudget)}</TableCell>
+                        <TableCell>{money(p.budget)}</TableCell>
+                        <TableCell>{p.duration}</TableCell>
+                        <TableCell>{p.rating || "N/A"}</TableCell>
+                        <TableCell>{p.bids}</TableCell>
+                        <TableCell>{p.country}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
             )}
           </CardContent>
         </Card>
 
         <Dialog open={!!selected} onOpenChange={(o) => !o && setSelected(null)}>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
             {selected && (
               <>
                 <DialogHeader>
-                  <DialogTitle>{selected.title}</DialogTitle>
+                  <DialogTitle className="break-words">{selected.title}</DialogTitle>
                   <DialogDescription>
                     {selected.country} · {selected.duration} days · {selected.rating || "N/A"} rating
                   </DialogDescription>
                 </DialogHeader>
                 <div className="space-y-3 text-sm">
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <div><span className="font-semibold">Budget min:</span> {money(selected.minBudget)}</div>
                     <div><span className="font-semibold">Budget max:</span> {money(selected.maxBudget)}</div>
                     <div><span className="font-semibold">Budget avg:</span> {money(selected.budget)}</div>
@@ -262,11 +416,11 @@ export default function App() {
                   </div>
                   <div>
                     <span className="font-semibold">Description:</span>
-                    <div className="mt-1 whitespace-pre-wrap text-muted-foreground max-h-60 overflow-auto">
+                    <div className="mt-1 whitespace-pre-wrap text-muted-foreground max-h-48 overflow-auto break-words">
                       {detailLoading ? "Loading..." : (selected.description || "No description cached.")}
                     </div>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 flex-wrap">
                     <Button variant="outline" onClick={() => toggleStar(selected)}>
                       {selected.starred ? "★ Unstar" : "☆ Star"}
                     </Button>
@@ -275,6 +429,7 @@ export default function App() {
                         <Button variant="outline">Open on karlancer</Button>
                       </a>
                     )}
+                    <Button variant="outline" onClick={() => copyMarkdown(selected)}>Copy as Markdown</Button>
                   </div>
                 </div>
               </>

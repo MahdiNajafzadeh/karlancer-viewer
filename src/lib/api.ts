@@ -62,16 +62,18 @@ async function fetchPage(url: string, attempt = 0): Promise<PageData> {
   return json.data;
 }
 
-export async function fetchAllPages(order = "newest", maxPages = 0, delayMs = 150, concurrency = 4, onProgress?: (p: number, total: number, count: number) => void) {
+export async function fetchAllPages(order = "newest", fromPage = 0, toPage = 0, delayMs = 150, concurrency = 4, onProgress?: (p: number, total: number, count: number) => void) {
   const first = await fetchPage(buildUrl(1, order), 0);
-  const total = first.last_page || 1;
-  const target = maxPages > 0 ? Math.min(maxPages, total) : total;
-  const all: RawProject[] = [...(first.data || [])];
-  onProgress?.(1, target, all.length);
+  const lastTotal = first.last_page || 1;
+  const start = fromPage > 0 ? fromPage : 1;
+  const end = toPage > 0 ? Math.min(toPage, lastTotal) : lastTotal;
+  const targetStart = Math.max(1, start);
+  const targetEnd = Math.max(targetStart, end);
 
   const pages: number[] = [];
-  for (let p = 2; p <= target; p++) pages.push(p);
+  for (let p = targetStart; p <= targetEnd; p++) pages.push(p);
 
+  const all: RawProject[] = [];
   let cursor = 0;
   async function worker() {
     while (cursor < pages.length) {
@@ -80,11 +82,18 @@ export async function fetchAllPages(order = "newest", maxPages = 0, delayMs = 15
       if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
       const data = await fetchPage(buildUrl(p, order));
       all.push(...(data.data || []));
-      onProgress?.(p, target, all.length);
+      onProgress?.(p, targetEnd, all.length);
     }
   }
   await Promise.all(Array.from({ length: concurrency }, () => worker()));
-  return { projects: all, totalPages: target, totalReported: first.total };
+  // dedupe
+  const seen = new Set<number>();
+  const deduped = all.filter((r) => {
+    if (seen.has(r.id)) return false;
+    seen.add(r.id);
+    return true;
+  });
+  return { projects: deduped, totalPages: targetEnd - targetStart + 1, totalReported: first.total };
 }
 
 export async function fetchProjectDetail(slug: string): Promise<string | null> {
