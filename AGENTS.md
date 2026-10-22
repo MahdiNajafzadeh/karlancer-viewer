@@ -27,6 +27,8 @@ Completed
     Frontend UI: formula editor, refresh control, sortable projects table with City + budget min/max/avg columns.
     Formula docs at docs/formula.md.
     Frontend builds successfully; backend runs on port 3000.
+    Project detail modal: skills rendered as shadcn Badges.
+    Copy split-button in detail modal: main click copies Markdown, dropdown offers Markdown / JSON / TOON (@toon-format/toon).
 
 Active
 
@@ -49,6 +51,7 @@ Relevant Files
     /home/mahdi.najafzadeh/.src/karlancer-evaluator/src/lib/formula.ts: dynamic formula evaluator.
     /home/mahdi.najafzadeh/.src/karlancer-evaluator/src/db/repo.ts: Drizzle SQLite repo.
     /home/mahdi.najafzadeh/.src/karlancer-evaluator/web/src/App.tsx: React UI with sortable table.
+    /home/mahdi.najafzadeh/.local/src/karlancer-viewer/web/src/components/copy-menu.tsx: split-button copy dropdown (Markdown/JSON/TOON).
     /home/mahdi.najafzadeh/.src/karlancer-evaluator/docs/formula.md: formula variable docs.
     /home/mahdi.najafzadeh/.src/karlancer-evaluator/config.json equivalent in DB settings.
 

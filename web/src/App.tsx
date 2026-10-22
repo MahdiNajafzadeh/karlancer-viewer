@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
+import { encode } from "@toon-format/toon";
 import { Button } from "@/components/ui/button";
+import { COPY_FORMATS, CopyMenu, type CopyFormat } from "@/components/copy-menu";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -153,8 +155,23 @@ export default function App() {
     }
   }
 
-  async function copyMarkdown(p: Project) {
-    const md = [
+  async function copyToClipboard(text: string, successMsg: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(successMsg);
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      toast.success(successMsg);
+    }
+  }
+
+  function projectMarkdown(p: Project) {
+    return [
       `# ${p.title}`,
       ``,
       `- **Score:** ${Math.round(p.score * 100) / 100}`,
@@ -174,18 +191,37 @@ export default function App() {
       ``,
       p.description || "No description.",
     ].filter((l) => l !== undefined).join("\n");
-    try {
-      await navigator.clipboard.writeText(md);
-      toast.success("Copied as Markdown");
-    } catch {
-      const ta = document.createElement("textarea");
-      ta.value = md;
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand("copy");
-      document.body.removeChild(ta);
-      toast.success("Copied as Markdown");
-    }
+  }
+
+  function projectPayload(p: Project) {
+    return {
+      id: p.id,
+      title: p.title,
+      score: Math.round(p.score * 100) / 100,
+      budgetMin: p.minBudget,
+      budgetMax: p.maxBudget,
+      budgetAvg: p.budget,
+      durationDays: p.duration,
+      rating: p.rating || null,
+      ratingCount: p.ratingCount,
+      bids: p.bids,
+      city: p.country,
+      successRate: p.successRate,
+      urgent: Boolean(p.urgent),
+      starred: Boolean(p.starred),
+      skills: p.skills,
+      url: p.url ? `https://www.karlancer.com/projects/${p.url}` : null,
+      description: p.description || null,
+    };
+  }
+
+  async function copyProject(p: Project, format: CopyFormat) {
+    const label = COPY_FORMATS.find((f) => f.id === format)?.label ?? format;
+    let text: string;
+    if (format === "markdown") text = projectMarkdown(p);
+    else if (format === "json") text = JSON.stringify(projectPayload(p), null, 2);
+    else text = encode(projectPayload(p));
+    await copyToClipboard(text, `Copied as ${label}`);
   }
 
   function applyFilters(list: Project[]) {
@@ -411,8 +447,18 @@ export default function App() {
                     <div><span className="font-semibold">Urgent:</span> {selected.urgent ? "Yes" : "No"}</div>
                   </div>
                   <div>
-                    <span className="font-semibold">Skills:</span>{" "}
-                    {selected.skills.join(", ") || "—"}
+                    <span className="font-semibold">Skills:</span>
+                    {selected.skills.length > 0 ? (
+                      <div className="mt-1 flex flex-wrap gap-1.5">
+                        {selected.skills.map((skill, i) => (
+                          <Badge key={`${skill}-${i}`} variant="secondary" className="font-normal">
+                            {skill}
+                          </Badge>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground"> —</span>
+                    )}
                   </div>
                   <div>
                     <span className="font-semibold">Description:</span>
@@ -429,7 +475,7 @@ export default function App() {
                         <Button variant="outline">Open on karlancer</Button>
                       </a>
                     )}
-                    <Button variant="outline" onClick={() => copyMarkdown(selected)}>Copy as Markdown</Button>
+                    <CopyMenu onCopy={(format) => copyProject(selected, format)} />
                   </div>
                 </div>
               </>
